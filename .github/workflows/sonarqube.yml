@@ -23,22 +23,42 @@ jobs:
         with:
           node-version: 20
 
+      - name: Download SonarCloud build-wrapper
+        run: |
+          curl -sSLo build-wrapper.zip https://sonarcloud.io/static/cpp/build-wrapper-linux-x86.zip
+          unzip build-wrapper.zip
+
       - name: Build container image
         run: docker build --build-arg NODE_ENV=development -t "$CONTAINER_IMAGE" .
 
       - name: Start container
         run: docker run --name "$CONTAINER_NAME" -t -d "$CONTAINER_IMAGE"
 
+      - name: Copy build-wrapper into container
+        run: docker cp build-wrapper-linux-x86 "$CONTAINER_NAME":/tmp/build-wrapper
+
+      - name: Build with build-wrapper
+        run: >
+          docker exec -t "$CONTAINER_NAME"
+          /tmp/build-wrapper/build-wrapper-linux-x86-64
+          --out-dir /app/bw-output
+          node-gyp --debug rebuild
+
       - name: Run tests
-        run: docker exec -t "$CONTAINER_NAME" npm test
+        run: >
+          docker exec -t "$CONTAINER_NAME"
+          npx mocha test --require test/setup.js --recursive --timeout 30000
 
       - name: Generate C++ coverage
         run: docker exec -t "$CONTAINER_NAME" npm run cover
 
-      - name: Copy coverage data from container
+      - name: Copy analysis data from container
         run: |
+          docker cp "$CONTAINER_NAME":/app/bw-output ./bw-output
           docker cp "$CONTAINER_NAME":/app/coverage.info ./coverage.info
+          docker cp "$CONTAINER_NAME":/app/build ./build
           sed -i 's|/app/||g' coverage.info
+          sed -i 's|/app/||g' bw-output/build-wrapper-dump.json
           mkdir -p coverage
           cp coverage.info coverage/lcov.info
 
@@ -94,11 +114,6 @@ jobs:
 
       - name: SonarQube Cloud Scan
         uses: SonarSource/sonarcloud-github-action@v3
-        with:
-          args: >
-            -Dsonar.c.file.suffixes=-
-            -Dsonar.cpp.file.suffixes=-
-            -Dsonar.objc.file.suffixes=-
         env:
           SONAR_TOKEN: ${{ secrets.SONAR }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
