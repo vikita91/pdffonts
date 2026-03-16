@@ -45,8 +45,8 @@ jobs:
       - name: Cleanup container
         if: always()
         run: |
-          docker rm --force "$CONTAINER_NAME"
-          docker rmi "$CONTAINER_IMAGE"
+          docker rm --force "$CONTAINER_NAME" || true
+          docker rmi "$CONTAINER_IMAGE" || true
 
       - name: Install dependencies for metrics
         run: npm install --ignore-scripts
