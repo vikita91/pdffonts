@@ -37,6 +37,9 @@ jobs:
       - name: Copy build-wrapper into container
         run: docker cp build-wrapper-linux-x86 "$CONTAINER_NAME":/tmp/build-wrapper
 
+      - name: Install node-gyp globally in container
+        run: docker exec -t "$CONTAINER_NAME" npm install -g node-gyp
+
       - name: Build with build-wrapper
         run: >
           docker exec -t "$CONTAINER_NAME"
