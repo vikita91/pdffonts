@@ -38,6 +38,7 @@ jobs:
       - name: Copy coverage data from container
         run: |
           docker cp "$CONTAINER_NAME":/app/coverage.info ./coverage.info
+          sed -i 's|/app/||g' coverage.info
           mkdir -p coverage
           cp coverage.info coverage/lcov.info
 
