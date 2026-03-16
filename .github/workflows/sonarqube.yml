@@ -80,6 +80,11 @@ jobs:
 
       - name: SonarQube Cloud Scan
         uses: SonarSource/sonarcloud-github-action@v3
+        with:
+          args: >
+            -Dsonar.c.file.suffixes=-
+            -Dsonar.cpp.file.suffixes=-
+            -Dsonar.objc.file.suffixes=-
         env:
           SONAR_TOKEN: ${{ secrets.SONAR }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
