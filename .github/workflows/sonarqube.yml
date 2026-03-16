@@ -1,0 +1,120 @@
+name: SonarQube Analysis
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+env:
+  CONTAINER_IMAGE: pdffonts-sonar:${{ github.sha }}-${{ github.run_id }}
+  CONTAINER_NAME: pdffonts_sonar_${{ github.sha }}-${{ github.run_id }}
+
+jobs:
+  sonarqube:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build container image
+        run: docker build --build-arg NODE_ENV=development -t "$CONTAINER_IMAGE" .
+
+      - name: Start container
+        run: docker run --name "$CONTAINER_NAME" -t -d "$CONTAINER_IMAGE"
+
+      - name: Run tests
+        run: docker exec -t "$CONTAINER_NAME" npm test
+
+      - name: Generate C++ coverage
+        run: docker exec -t "$CONTAINER_NAME" npm run cover
+
+      - name: Copy coverage data from container
+        run: |
+          docker cp "$CONTAINER_NAME":/app/coverage.info ./coverage.info
+          sed -i 's|/app/||g' coverage.info
+          mkdir -p coverage
+          cp coverage.info coverage/lcov.info
+
+      - name: Cleanup container
+        if: always()
+        run: |
+          docker rm --force "$CONTAINER_NAME"
+          docker rmi "$CONTAINER_IMAGE"
+
+      - name: Install dependencies for metrics
+        run: npm install --ignore-scripts
+
+      - name: Generate HTML coverage report
+        run: |
+          sudo apt-get update && sudo apt-get install -y lcov
+          genhtml coverage.info -o coverage
+        continue-on-error: true
+
+      - name: Generate metrics JSON
+        run: node scripts/generate-metrics.js
+
+      - name: Post test inventory to summary
+        if: always()
+        run: |
+          if [ -f metrics.json ]; then
+            node -e "
+              const m = require('./metrics.json');
+              const cov = m.coverage && m.coverage.lines && m.coverage.lines.pct != null ? m.coverage.lines.pct + '%' : 'N/A';
+              const brCov = m.coverage && m.coverage.branches && m.coverage.branches.pct != null ? m.coverage.branches.pct + '%' : 'N/A';
+              const fnCov = m.coverage && m.coverage.functions && m.coverage.functions.pct != null ? m.coverage.functions.pct + '%' : 'N/A';
+              let md = '## 📊 Test Inventory & Coverage — ' + m.repository + '\n\n';
+              md += '| Metric | Value |\n|---|---|\n';
+              md += '| **Repository** | ' + m.repository + ' |\n';
+              md += '| **Version** | ' + m.version + ' |\n';
+              md += '| **Unit Test Files** | ' + m.tests.unitFiles + ' |\n';
+              md += '| **Integration Test Files** | ' + m.tests.integrationFiles + ' |\n';
+              md += '| **Total Test Files** | ' + m.tests.totalFiles + ' |\n';
+              md += '| **Line Coverage** | ' + cov + ' |\n';
+              md += '| **Branch Coverage** | ' + brCov + ' |\n';
+              md += '| **Function Coverage** | ' + fnCov + ' |\n\n';
+              if (m.tests.unitTestFiles.length > 0) {
+                md += '### Unit Tests\n';
+                m.tests.unitTestFiles.forEach(f => md += '- \`' + f + '\`\n');
+                md += '\n';
+              }
+              if (m.tests.integrationTestFiles.length > 0) {
+                md += '### Integration Tests\n';
+                m.tests.integrationTestFiles.forEach(f => md += '- \`' + f + '\`\n');
+              }
+              require('fs').appendFileSync(process.env.GITHUB_STEP_SUMMARY, md);
+            "
+          fi
+
+      - name: SonarQube Cloud Scan
+        uses: SonarSource/sonarcloud-github-action@v3
+        with:
+          args: >
+            -Dsonar.c.file.suffixes=-
+            -Dsonar.cpp.file.suffixes=-
+            -Dsonar.objc.file.suffixes=-
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload metrics artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-metrics
+          path: metrics.json
+          if-no-files-found: ignore
+
+      - name: Upload HTML coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-html
+          path: coverage/
+          if-no-files-found: ignore
