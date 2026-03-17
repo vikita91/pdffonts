@@ -54,6 +54,31 @@ jobs:
           mkdir -p coverage
           cp coverage.info coverage/lcov.info
 
+      - name: Convert LCOV to SonarCloud generic coverage format
+        run: |
+          node -e "
+            const fs = require('fs');
+            const lcov = fs.readFileSync('coverage.info', 'utf8');
+            let xml = '<coverage version=\"1\">\n';
+            let currentFile = null;
+            for (const line of lcov.split('\n')) {
+              if (line.startsWith('SF:')) {
+                currentFile = line.slice(3);
+                xml += '  <file path=\"' + currentFile + '\">\n';
+              } else if (line.startsWith('DA:') && currentFile) {
+                const parts = line.slice(3).split(',');
+                xml += '    <lineToCover lineNumber=\"' + parts[0] + '\" covered=\"' + (parseInt(parts[1]) > 0) + '\"/>\n';
+              } else if (line === 'end_of_record' && currentFile) {
+                xml += '  </file>\n';
+                currentFile = null;
+              }
+            }
+            xml += '</coverage>';
+            fs.writeFileSync('coverage-sonar.xml', xml);
+            console.log('Generic coverage report written to coverage-sonar.xml');
+            console.log(xml);
+          "
+
       - name: Generate HTML coverage report
         run: genhtml coverage.info -o coverage
         continue-on-error: true
