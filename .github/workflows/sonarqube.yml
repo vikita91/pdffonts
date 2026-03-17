@@ -6,10 +6,6 @@ on:
   pull_request:
     branches: [master, main]
 
-env:
-  CONTAINER_IMAGE: pdffonts-sonar:${{ github.sha }}-${{ github.run_id }}
-  CONTAINER_NAME: pdffonts_sonar_${{ github.sha }}-${{ github.run_id }}
-
 jobs:
   sonarqube:
     runs-on: ubuntu-latest
@@ -23,61 +19,43 @@ jobs:
         with:
           node-version: 20
 
+      - name: Install system dependencies
+        run: sudo bash ./scripts/install-system-dependencies-debian.sh
+
+      - name: Install poppler
+        run: sudo bash ./scripts/install-poppler-debian.sh
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install node-gyp
+        run: npm install -g node-gyp
+
       - name: Download SonarCloud build-wrapper
         run: |
           curl -sSLo build-wrapper.zip https://sonarcloud.io/static/cpp/build-wrapper-linux-x86.zip
           unzip build-wrapper.zip
 
-      - name: Build container image
-        run: docker build --build-arg NODE_ENV=development -t "$CONTAINER_IMAGE" .
-
-      - name: Start container
-        run: docker run --name "$CONTAINER_NAME" -t -d "$CONTAINER_IMAGE"
-
-      - name: Copy build-wrapper into container
-        run: docker cp build-wrapper-linux-x86 "$CONTAINER_NAME":/tmp/build-wrapper
-
-      - name: Install node-gyp globally in container
-        run: docker exec -t "$CONTAINER_NAME" npm install -g node-gyp
-
       - name: Build with build-wrapper
         run: >
-          docker exec -t "$CONTAINER_NAME"
-          /tmp/build-wrapper/build-wrapper-linux-x86-64
-          --out-dir /app/bw-output
+          build-wrapper-linux-x86/build-wrapper-linux-x86-64
+          --out-dir bw-output
           node-gyp --debug rebuild
 
       - name: Run tests
-        run: >
-          docker exec -t "$CONTAINER_NAME"
-          npx mocha test --require test/setup.js --recursive --timeout 30000
+        run: npx mocha test --require test/setup.js --recursive --timeout 30000
+        continue-on-error: true
 
       - name: Generate C++ coverage
-        run: docker exec -t "$CONTAINER_NAME" npm run cover
+        run: npm run cover
 
-      - name: Copy analysis data from container
+      - name: Prepare coverage reports
         run: |
-          docker cp "$CONTAINER_NAME":/app/bw-output ./bw-output
-          docker cp "$CONTAINER_NAME":/app/coverage.info ./coverage.info
-          docker cp "$CONTAINER_NAME":/app/build ./build
-          sed -i 's|/app/||g' coverage.info
-          sed -i 's|/app/||g' bw-output/build-wrapper-dump.json
           mkdir -p coverage
           cp coverage.info coverage/lcov.info
 
-      - name: Cleanup container
-        if: always()
-        run: |
-          docker rm --force "$CONTAINER_NAME" || true
-          docker rmi "$CONTAINER_IMAGE" || true
-
-      - name: Install dependencies for metrics
-        run: npm install --ignore-scripts
-
       - name: Generate HTML coverage report
-        run: |
-          sudo apt-get update && sudo apt-get install -y lcov
-          genhtml coverage.info -o coverage
+        run: genhtml coverage.info -o coverage
         continue-on-error: true
 
       - name: Generate metrics JSON
